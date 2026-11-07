@@ -33,6 +33,7 @@ class AlarmReceiver : BroadcastReceiver() {
                 if (med != null && Store.takenAt(c, date, medId, time) == null) {
                     Notifier.show(c, med, time, date)
                 }
+                MediWidget.updateAll(c) // 시간 지난 약 빨간색 반영
             }
             Alarms.ACTION_TAKE -> {
                 Store.setTaken(c, date, medId, time, true)
@@ -48,7 +49,10 @@ class AlarmReceiver : BroadcastReceiver() {
 
 /** 폰 재부팅·앱 업데이트·시간 변경 뒤 알람 다시 걸기 */
 class BootReceiver : BroadcastReceiver() {
-    override fun onReceive(c: Context, i: Intent) = Alarms.rescheduleAll(c)
+    override fun onReceive(c: Context, i: Intent) {
+        Alarms.rescheduleAll(c)
+        MediWidget.updateAll(c)
+    }
 }
 
 object Notifier {

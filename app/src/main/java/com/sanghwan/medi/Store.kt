@@ -46,6 +46,7 @@ object Store {
             )
         }
         p(c).edit().putString("meds", arr.toString()).apply()
+        MediWidget.updateAll(c)
     }
 
     fun save(c: Context, id: Int?, name: String, memo: String, times: List<String>): Med {
@@ -83,5 +84,6 @@ object Store {
         l.keys().forEach { k -> if (k.substringBefore("|") < cutoff) old.add(k) }
         old.forEach { l.remove(it) }
         p(c).edit().putString("logs", l.toString()).apply()
+        MediWidget.updateAll(c)
     }
 }

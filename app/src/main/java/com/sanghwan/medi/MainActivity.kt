@@ -73,6 +73,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         tick++ // 알림에서 "먹었어요" 누른 것 반영
+        MediWidget.updateAll(this)
     }
 }
 
