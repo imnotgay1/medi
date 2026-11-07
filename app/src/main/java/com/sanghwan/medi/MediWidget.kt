@@ -25,30 +25,40 @@ class MediWidget : AppWidgetProvider() {
 
     override fun onReceive(c: Context, i: Intent) {
         when (i.action) {
-            ACTION_TOGGLE -> {
-                val medId = i.getIntExtra("medId", -1)
-                val time = i.getStringExtra("time")
-                val date = i.getStringExtra("date")
-                // 날짜가 바뀐 뒤 옛 화면을 누른 경우엔 새로고침만
-                if (time != null && date == LocalDate.now().toString()) {
-                    val today = LocalDate.now()
-                    val taken = Store.takenAt(c, today, medId, time) != null
-                    Store.setTaken(c, today, medId, time, !taken) // 위젯 갱신은 Store가 함
-                    if (!taken) Notifier.cancel(c, medId, time)
-                } else {
-                    updateAll(c)
-                }
-            }
+            ACTION_TOGGLE -> handleToggle(c, i)
             ACTION_REFRESH -> updateAll(c)
             else -> super.onReceive(c, i)
         }
     }
 
-    private data class Dose(val med: Med, val time: String, val takenAt: Long?)
+    internal data class Dose(val med: Med, val time: String, val takenAt: Long?)
 
     companion object {
-        private const val ACTION_TOGGLE = "com.sanghwan.medi.WIDGET_TOGGLE"
+        const val ACTION_TOGGLE = "com.sanghwan.medi.WIDGET_TOGGLE"
         private const val ACTION_REFRESH = "com.sanghwan.medi.WIDGET_REFRESH"
+
+        /** 위젯에서 약을 눌렀을 때 체크/취소 */
+        fun handleToggle(c: Context, i: Intent) {
+            val medId = i.getIntExtra("medId", -1)
+            val time = i.getStringExtra("time")
+            val date = i.getStringExtra("date")
+            // 날짜가 바뀐 뒤 옛 화면을 누른 경우엔 새로고침만
+            if (time != null && date == LocalDate.now().toString()) {
+                val today = LocalDate.now()
+                val taken = Store.takenAt(c, today, medId, time) != null
+                Store.setTaken(c, today, medId, time, !taken) // 위젯 갱신은 Store가 함
+                if (!taken) Notifier.cancel(c, medId, time)
+            } else {
+                updateAll(c)
+            }
+        }
+
+        internal fun todayDoses(c: Context): List<Dose> {
+            val today = LocalDate.now()
+            return Store.meds(c)
+                .flatMap { m -> m.times.map { Dose(m, it, Store.takenAt(c, today, m.id, it)) } }
+                .sortedBy { it.time }
+        }
         private const val MAX_ROWS = 4
 
         private val ROW = intArrayOf(R.id.row0, R.id.row1, R.id.row2, R.id.row3)
@@ -58,10 +68,17 @@ class MediWidget : AppWidgetProvider() {
 
         fun updateAll(c: Context) {
             val mgr = AppWidgetManager.getInstance(c)
-            val ids = mgr.getAppWidgetIds(ComponentName(c, MediWidget::class.java))
-            if (ids.isEmpty()) return
-            val views = build(c)
-            ids.forEach { mgr.updateAppWidget(it, views) }
+            val big = mgr.getAppWidgetIds(ComponentName(c, MediWidget::class.java))
+            val small = mgr.getAppWidgetIds(ComponentName(c, SmallWidget::class.java))
+            if (big.isEmpty() && small.isEmpty()) return
+            if (big.isNotEmpty()) {
+                val views = build(c)
+                big.forEach { mgr.updateAppWidget(it, views) }
+            }
+            if (small.isNotEmpty()) {
+                val views = SmallWidget.build(c)
+                small.forEach { mgr.updateAppWidget(it, views) }
+            }
             scheduleMidnight(c)
         }
 
