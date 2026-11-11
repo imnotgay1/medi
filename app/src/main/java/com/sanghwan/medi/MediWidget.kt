@@ -45,9 +45,12 @@ class MediWidget : AppWidgetProvider() {
             // 날짜가 바뀐 뒤 옛 화면을 누른 경우엔 새로고침만
             if (time != null && date == LocalDate.now().toString()) {
                 val today = LocalDate.now()
-                val taken = Store.takenAt(c, today, medId, time) != null
-                Store.setTaken(c, today, medId, time, !taken) // 위젯 갱신은 Store가 함
-                if (!taken) Notifier.cancel(c, medId, time)
+                val med = Store.meds(c).find { it.id == medId } ?: return updateAll(c)
+                val taken = Store.takenAt(c, today, med, time) != null
+                Store.setTaken(c, today, med, time, !taken) // 위젯 갱신은 Store가 함
+                if (!taken) {
+                    if (med.once) Notifier.cancelMed(c, med) else Notifier.cancel(c, medId, time)
+                }
             } else {
                 updateAll(c)
             }
@@ -56,7 +59,7 @@ class MediWidget : AppWidgetProvider() {
         internal fun todayDoses(c: Context): List<Dose> {
             val today = LocalDate.now()
             return Store.meds(c)
-                .flatMap { m -> m.times.map { Dose(m, it, Store.takenAt(c, today, m.id, it)) } }
+                .flatMap { m -> Store.doseTimes(m).map { Dose(m, it, Store.takenAt(c, today, m, it)) } }
                 .sortedBy { it.time }
         }
         private const val MAX_ROWS = 4
@@ -65,6 +68,10 @@ class MediWidget : AppWidgetProvider() {
         private val TIME = intArrayOf(R.id.time0, R.id.time1, R.id.time2, R.id.time3)
         private val NAME = intArrayOf(R.id.name0, R.id.name1, R.id.name2, R.id.name3)
         private val CHECK = intArrayOf(R.id.check0, R.id.check1, R.id.check2, R.id.check3)
+
+        internal fun fmt(ms: Long): String =
+            java.time.Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalTime()
+                .format(DateTimeFormatter.ofPattern("HH:mm"))
 
         fun updateAll(c: Context) {
             val mgr = AppWidgetManager.getInstance(c)
@@ -101,7 +108,7 @@ class MediWidget : AppWidgetProvider() {
             val color = { id: Int -> ContextCompat.getColor(c, id) }
 
             val all = Store.meds(c)
-                .flatMap { m -> m.times.map { Dose(m, it, Store.takenAt(c, today, m.id, it)) } }
+                .flatMap { m -> Store.doseTimes(m).map { Dose(m, it, Store.takenAt(c, today, m, it)) } }
                 .sortedBy { it.time }
             val done = all.count { it.takenAt != null }
 
@@ -137,7 +144,7 @@ class MediWidget : AppWidgetProvider() {
                 val late = !taken && LocalTime.parse(d.time).isBefore(now)
 
                 v.setViewVisibility(ROW[idx], View.VISIBLE)
-                v.setTextViewText(TIME[idx], d.time)
+                v.setTextViewText(TIME[idx], d.takenAt?.let { fmt(it) } ?: d.time)
                 v.setTextViewText(NAME[idx], d.med.name)
                 v.setTextViewText(CHECK[idx], if (taken) "✓" else "○")
                 v.setTextColor(TIME[idx], color(if (late) R.color.w_late else if (taken) R.color.w_sub else R.color.w_text))

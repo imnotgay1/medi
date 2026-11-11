@@ -129,10 +129,10 @@ fun App(tick: Int, refresh: () -> Unit) {
     }
 
     if (editorOpen) {
-        EditorDialog(editing, onDismiss = { editorOpen = false }) { name, memo, times ->
+        EditorDialog(editing, onDismiss = { editorOpen = false }) { name, memo, times, once ->
             val old = editing
             if (old != null) Alarms.cancelMed(c, old)
-            val med = Store.save(c, old?.id, name, memo, times)
+            val med = Store.save(c, old?.id, name, memo, times, once)
             med.times.forEach { Alarms.schedule(c, med.id, it) }
             editorOpen = false
             refresh()
@@ -147,8 +147,8 @@ fun TodayScreen(meds: List<Med>, tick: Int, refresh: () -> Unit, onAdd: () -> Un
     val c = LocalContext.current
     val today = LocalDate.now()
     val now = LocalTime.now()
-    val doses = meds.flatMap { m -> m.times.map { m to it } }.sortedBy { it.second }
-    val done = doses.count { (m, t) -> Store.takenAt(c, today, m.id, t) != null }
+    val doses = meds.flatMap { m -> Store.doseTimes(m).map { m to it } }.sortedBy { it.second }
+    val done = doses.count { (m, t) -> Store.takenAt(c, today, m, t) != null }
     val cs = MaterialTheme.colorScheme
 
     LazyColumn(
@@ -191,19 +191,35 @@ fun TodayScreen(meds: List<Med>, tick: Int, refresh: () -> Unit, onAdd: () -> Un
         }
 
         items(doses, key = { "${it.first.id}|${it.second}" }) { (m, t) ->
-            val takenAt = Store.takenAt(c, today, m.id, t)
+            val takenAt = Store.takenAt(c, today, m, t)
+            val yesterday = if (takenAt == null) Store.takenAt(c, today.minusDays(1), m, t) else null
             val late = takenAt == null && LocalTime.parse(t).isBefore(now)
-            DoseRow(m, t, takenAt, late) {
-                Store.setTaken(c, today, m.id, t, takenAt == null)
-                if (takenAt == null) Notifier.cancel(c, m.id, t)
-                refresh()
-            }
+            DoseRow(
+                m, t, takenAt, yesterday, late,
+                onToggle = {
+                    Store.setTaken(c, today, m, t, takenAt == null)
+                    if (takenAt == null) {
+                        if (m.once) Notifier.cancelMed(c, m) else Notifier.cancel(c, m.id, t)
+                    }
+                    refresh()
+                },
+                onEditTime = {
+                    val cur = Instant.ofEpochMilli(takenAt ?: System.currentTimeMillis())
+                        .atZone(ZoneId.systemDefault()).toLocalTime()
+                    TimePickerDialog(c, { _, h, mi ->
+                        val at = today.atTime(h, mi).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        Store.setTaken(c, today, m, t, true, at)
+                        if (m.once) Notifier.cancelMed(c, m) else Notifier.cancel(c, m.id, t)
+                        refresh()
+                    }, cur.hour, cur.minute, true).show()
+                }
+            )
         }
 
         if (doses.isNotEmpty()) {
             item {
                 Text(
-                    "카드를 누르면 체크 / 다시 누르면 취소",
+                    "카드를 누르면 체크 / 다시 누르면 취소\n늦게 체크했으면 '시간 수정'으로 실제 먹은 시간을 넣으세요",
                     style = MaterialTheme.typography.bodySmall,
                     color = cs.onSurfaceVariant,
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
@@ -214,7 +230,10 @@ fun TodayScreen(meds: List<Med>, tick: Int, refresh: () -> Unit, onAdd: () -> Un
 }
 
 @Composable
-fun DoseRow(m: Med, t: String, takenAt: Long?, late: Boolean, onToggle: () -> Unit) {
+fun DoseRow(
+    m: Med, t: String, takenAt: Long?, yesterday: Long?, late: Boolean,
+    onToggle: () -> Unit, onEditTime: () -> Unit,
+) {
     val cs = MaterialTheme.colorScheme
     val taken = takenAt != null
     Card(
@@ -224,8 +243,9 @@ fun DoseRow(m: Med, t: String, takenAt: Long?, late: Boolean, onToggle: () -> Un
         )
     ) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            // 먹었으면 왼쪽 큰 글씨 = 실제 먹은 시간
             Text(
-                t,
+                if (takenAt != null) fmtClock(takenAt) else t,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = if (late) cs.error else cs.onSurface
@@ -233,17 +253,32 @@ fun DoseRow(m: Med, t: String, takenAt: Long?, late: Boolean, onToggle: () -> Un
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Text(m.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                val status = when {
-                    takenAt != null -> "${fmtClock(takenAt)}에 먹음"
-                    late -> "아직 안 먹었어요"
-                    else -> ""
+                val lines = mutableListOf<String>()
+                if (takenAt != null) {
+                    lines += "${fmtClock(takenAt)}에 먹음 · 다음은 내일 ${fmtClock(takenAt)}쯤"
+                } else {
+                    if (yesterday != null) lines += "어제 ${fmtClock(yesterday)}에 먹음"
+                    if (late) lines += "아직 안 먹었어요"
+                    if (m.once && m.times.size > 1) lines += "알림 " + m.times.joinToString(" · ")
                 }
-                val sub = listOf(status, m.memo).filter { it.isNotBlank() }.joinToString(" · ")
-                if (sub.isNotBlank()) {
+                if (m.memo.isNotBlank()) lines += m.memo
+                lines.forEach {
                     Text(
-                        sub,
+                        it,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (late) cs.error else cs.onSurfaceVariant
+                        color = if (late && it == "아직 안 먹었어요") cs.error else cs.onSurfaceVariant
+                    )
+                }
+                if (taken) {
+                    Text(
+                        "시간 수정",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = cs.primary,
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            .clip(CircleShape)
+                            .clickable { onEditTime() }
+                            .padding(vertical = 4.dp, horizontal = 2.dp)
                     )
                 }
             }
@@ -341,10 +376,11 @@ fun MedsScreen(meds: List<Med>, onEdit: (Med) -> Unit, onDelete: (Med) -> Unit) 
 }
 
 @Composable
-fun EditorDialog(med: Med?, onDismiss: () -> Unit, onSave: (String, String, List<String>) -> Unit) {
+fun EditorDialog(med: Med?, onDismiss: () -> Unit, onSave: (String, String, List<String>, Boolean) -> Unit) {
     val c = LocalContext.current
     var name by remember { mutableStateOf(med?.name ?: "") }
     var memo by remember { mutableStateOf(med?.memo ?: "") }
+    var once by remember { mutableStateOf(med?.once ?: true) }
     val times = remember { mutableStateListOf<String>().apply { addAll(med?.times ?: emptyList()) } }
 
     fun pickTime() {
@@ -376,7 +412,18 @@ fun EditorDialog(med: Med?, onDismiss: () -> Unit, onSave: (String, String, List
                     label = { Text("메모 (예: 식후 1알)") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Text("복용 시간", style = MaterialTheme.typography.titleSmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("하루 1번만 먹기", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            if (once) "알림이 여러 번 와도 1번 먹으면 끝" else "알림 시간마다 따로 먹기",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(checked = once, onCheckedChange = { once = it })
+                }
+                Text(if (once) "알림 시간" else "복용 시간", style = MaterialTheme.typography.titleSmall)
                 times.forEach { t ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(t, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
@@ -391,7 +438,7 @@ fun EditorDialog(med: Med?, onDismiss: () -> Unit, onSave: (String, String, List
         confirmButton = {
             TextButton(
                 enabled = name.isNotBlank() && times.isNotEmpty(),
-                onClick = { onSave(name.trim(), memo.trim(), times.toList()) }
+                onClick = { onSave(name.trim(), memo.trim(), times.toList(), once) }
             ) { Text("저장") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } }
@@ -418,11 +465,13 @@ fun HistoryScreen(meds: List<Med>, tick: Int) {
         items(days, key = { it.toString() }) { d ->
             val doses = meds
                 .filter { !d.isBefore(LocalDate.parse(it.since)) }
-                .flatMap { m -> m.times.map { m to it } }
-                .filter { (_, t) -> d.isBefore(today) || !LocalTime.parse(t).isAfter(now) }
+                .flatMap { m -> Store.doseTimes(m).map { m to it } }
+                .filter { (m, t) ->
+                    d.isBefore(today) || !LocalTime.parse(t).isAfter(now) || Store.takenAt(c, d, m, t) != null
+                }
                 .sortedBy { it.second }
             if (doses.isNotEmpty()) {
-                val missed = doses.filter { (m, t) -> Store.takenAt(c, d, m.id, t) == null }
+                val missed = doses.filter { (m, t) -> Store.takenAt(c, d, m, t) == null }
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -437,8 +486,13 @@ fun HistoryScreen(meds: List<Med>, tick: Int) {
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        missed.forEach { (m, t) ->
-                            Text("✗ $t  ${m.name}", style = MaterialTheme.typography.bodyMedium, color = cs.error)
+                        doses.forEach { (m, t) ->
+                            val at = Store.takenAt(c, d, m, t)
+                            if (at != null) {
+                                Text("✓ ${fmtClock(at)}  ${m.name}", style = MaterialTheme.typography.bodyMedium)
+                            } else {
+                                Text("✗ 안 먹음  ${m.name}", style = MaterialTheme.typography.bodyMedium, color = cs.error)
+                            }
                         }
                     }
                 }

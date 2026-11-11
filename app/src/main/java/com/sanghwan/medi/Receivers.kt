@@ -29,14 +29,18 @@ class AlarmReceiver : BroadcastReceiver() {
                 if (i.action == Alarms.ACTION_FIRE && med != null && time in med.times) {
                     Alarms.schedule(c, med.id, time)
                 }
-                // 앱에서 이미 체크했으면 알림 안 띄움
-                if (med != null && Store.takenAt(c, date, medId, time) == null) {
+                // 이미 먹었으면 알림 안 띄움 (1회 약은 오늘 한 번이라도 먹었으면 끝)
+                if (med != null && Store.takenAt(c, date, med, time) == null) {
+                    if (med.once) Notifier.cancelMed(c, med) // 이전 알림은 지우고 최신 것만
                     Notifier.show(c, med, time, date)
                 }
                 MediWidget.updateAll(c) // 시간 지난 약 빨간색 반영
             }
             Alarms.ACTION_TAKE -> {
-                Store.setTaken(c, date, medId, time, true)
+                if (med != null) {
+                    Store.setTaken(c, date, med, time, true)
+                    if (med.once) Notifier.cancelMed(c, med)
+                }
                 Notifier.cancel(c, medId, time)
             }
             Alarms.ACTION_SNOOZE -> {
@@ -95,4 +99,6 @@ object Notifier {
 
     fun cancel(c: Context, medId: Int, time: String) =
         NotificationManagerCompat.from(c).cancel(Alarms.code(medId, time))
+
+    fun cancelMed(c: Context, med: Med) = med.times.forEach { cancel(c, med.id, it) }
 }

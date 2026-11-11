@@ -12,8 +12,8 @@ android {
         applicationId = "com.sanghwan.medi"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
     }
 
     // 고정 서명키: 새로 빌드한 APK를 지우지 않고 덮어 설치(업데이트)할 수 있게 함

@@ -38,9 +38,10 @@ class SmallWidget : AppWidgetProvider() {
 
             if (next == null) {
                 // 약이 없거나 다 먹음
-                v.setTextViewText(R.id.s_time, if (all.isEmpty()) "+" else "✓")
+                val last = all.mapNotNull { it.takenAt }.maxOrNull()
+                v.setTextViewText(R.id.s_time, if (last == null) "+" else "✓ " + MediWidget.fmt(last))
                 v.setTextColor(R.id.s_time, color(R.color.w_accent))
-                v.setTextViewText(R.id.s_name, if (all.isEmpty()) "약 추가" else "다 먹음")
+                v.setTextViewText(R.id.s_name, if (all.isEmpty()) "약 추가" else "먹음")
                 v.setTextColor(R.id.s_name, color(R.color.w_sub))
                 v.setOnClickPendingIntent(R.id.s_root, open)
                 return v
